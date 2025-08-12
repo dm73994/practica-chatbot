@@ -1,0 +1,53 @@
+if __name__ == '__main__':
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=100,
+        separators=["\n\n", "\n", ".", ";", ",", " "]
+    )
+
+    pdfs = utils.utils.load_pdfs()
+    docxs = utils.utils.load_docs()
+    all_docs = pdfs + docxs
+
+    print(f"Total documents: {len(all_docs)}")
+    docs_chunks = text_splitter.split_documents(all_docs)
+    print(f"Chunks: {docs_chunks}")
+    #docs_chunks = [d for d in docs_chunks if len(d.page_content) > 200]
+
+    print(f'Chunks: {len(docs_chunks)}')
+
+    ## Make some custom chunks to give a big-picture details
+    doc_string = "Available Documents:"
+    doc_metadata = []
+    for chunks in docs_chunks:
+        metadata = getattr(chunks, 'metadata', {})
+        print(metadata)
+        doc_string += "\n - " + metadata.get('title')
+        print(doc_string)
+        doc_metadata += [str(metadata)]
+
+    extra_chunks = [doc_string] + doc_metadata
+
+    ## Printing out some summary information for reference
+    pprint(doc_string, '\n')
+    for i, chunks in enumerate(docs_chunks):
+        print(f"Document {i}")
+        print(f" - # Chunks: {len(docs_chunks)}")
+        print(f" - Metadata: ")
+        pprint(chunks.metadata)
+        print()
+
+    embedder = NVIDIAEmbeddings(model="nvidia/nv-embed-v1", truncate="END")
+    vecstores = [FAISS.from_documents(docs_chunks, embedder)]
+    embed_dims = len(embedder.embed_query("test"))
+    index = IndexFlatL2(embed_dims)
+    docstore = FAISS(
+        embedding_function=embedder,
+        index=IndexFlatL2(embed_dims),
+        docstore=InMemoryDocstore(),
+        index_to_docstore_id={},
+        normalize_L2=False
+    )
+    for vector in vecstores:
+        docstore.merge_from(vector)
+    print(f"Constructed aggregate docstore with {len(docstore.docstore._dict)} chunks")

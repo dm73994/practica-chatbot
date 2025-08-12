@@ -1,40 +1,65 @@
+from langchain_community.vectorstores import FAISS
 from langchain_core.runnables import RunnableAssign
+from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
 
 from models import llm
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.passthrough import RunnableAssign
 
-from utils import utils as utils
+from utils.utils import long_reorder, docs2str, parse_to_history, RPrint
+
+### RAG CHAIN
+
+docstore = FAISS.load_local("docstore_index", llm.vecstore_retriever, allow_dangerous_deserialization=True)
+retriever = docstore.as_retriever()
 
 chat_history = []
-
 chat_prompt = ChatPromptTemplate.from_messages([
     ("system",
-     "You are a document chatbot. Help the user as they ask questions about documents. "
-     "Answer only from retrieval and only cite sources that are used. Make your response conversational."),
+     "Eres un chatbot especializado en documentos. Ayuda al usuario a responder sus preguntas sobre documentos. "
+     "Responde únicamente con la información recuperada y cita solo las fuentes que utilices. Mantén un tono conversacional."),
 
     ("system",
-     "The following information may be useful for your response:\n"
-     "Conversation History Retrieval: \n{history}\n\n"
-     "Document Retrieval:\n{context}"),
+     "La siguiente información puede ser útil para tu respuesta:\n"
+     "Historial de conversación recuperado:\n{history}\n\n"
+     "Documentos recuperados:\n{context}"),
 
     ("human",
-     "User just asked you a question: {input}")
+     "El usuario te acaba de hacer la siguiente pregunta: {input}")
 ])
 
 rag_chain = (
     {
         'input': (lambda x: x),
-        'context': (lambda x: 'No hay ningun contexto de momento, esto solo es una prueba'),
+        'context': retriever | long_reorder | docs2str,
         'history': (lambda x: chat_history),
     }
-    | utils.RPrint()
     | chat_prompt
-    | llm.llm_model
+    | RPrint()
+    | llm.llama_instruct
+    | RPrint()
+    | StrOutputParser()
+)
+
+### CHAT_HISTORY MANAGEMENT
+
+resume_chat_prompt = ChatPromptTemplate.from_template(
+    "A continuación tienes una interacción previa en el formato:\n"
+    "{input}\n\n"
+    "Resume la conversación de forma muy breve, clara y directa, "
+    "dejando solo lo esencial. Reformula la pregunta del usuario en una sola frase corta si es posible. "
+    "Evita detalles irrelevantes y texto innecesario."
+)
+
+resume_chain = (
+    resume_chat_prompt
+    | llm.llama_instruct
     | StrOutputParser()
 )
 
 def update_chat_history(data):
-    h = utils.parse_to_history(data)
+    h = parse_to_history(data)
+    response = resume_chain.invoke({'input': h})
+    print(response)
     chat_history.append(h)
