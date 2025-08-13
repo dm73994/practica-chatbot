@@ -31,4 +31,4 @@ if __name__ == '__main__':
         examples=["hello", "hola"],
         title="Rag Chat",
     )
-    demo.launch(debug=False)
+    demo.launch(debug=False, share=True)
