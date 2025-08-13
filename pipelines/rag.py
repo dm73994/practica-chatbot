@@ -7,33 +7,52 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables.passthrough import RunnableAssign
 
-from utils.utils import long_reorder, docs2str, parse_to_history, RPrint
+from pipelines.chat_history import chat_history, update_chat_history
+from utils.utils import long_reorder, docs2str, RPrint
 
 ### RAG CHAIN
 
 docstore = FAISS.load_local("docstore_index", llm.vecstore_retriever, allow_dangerous_deserialization=True)
 retriever = docstore.as_retriever()
 
-chat_history = []
+
 chat_prompt = ChatPromptTemplate.from_messages([
     ("system",
-     "Eres un chatbot especializado en documentos. Ayuda al usuario a responder sus preguntas sobre documentos. "
-     "Responde únicamente con la información recuperada y cita solo las fuentes que utilices. Mantén un tono conversacional."),
+     "Eres un asistente especializado en telemedicina del Hospital Universitario San José (HUSJ). "
+     "Tu función es proporcionar información precisa y actualizada sobre los servicios de telemedicina "
+     "basándote exclusivamente en los documentos oficiales de la institución.\n\n"
+
+     "INSTRUCCIONES CLAVE:\n"
+     "• Responde ÚNICAMENTE con información presente en los documentos recuperados\n"
+     "• Si no encuentras información específica en los documentos, indícalo claramente\n"
+     "• Cita las fuentes exactas que utilices en tu respuesta\n"
+     "• Mantén un tono profesional pero accesible\n"
+     "• Prioriza la precisión sobre la completitud\n"
+     "• Si la pregunta no está relacionada con telemedicina del HUSJ, redirige amablemente al tema\n\n"
+
+     "FORMATO DE RESPUESTA:\n"
+     "• Proporciona la información solicitada de manera clara y estructurada\n"
+     "• Incluye referencias específicas a los documentos utilizados\n"
+     "• Si hay múltiples opciones o procedimientos, preséntelos de forma organizada\n"
+     "• Finaliza con una invitación a hacer preguntas adicionales si es necesario"),
 
     ("system",
-     "La siguiente información puede ser útil para tu respuesta:\n"
-     "Historial de conversación recuperado:\n{history}\n\n"
-     "Documentos recuperados:\n{context}"),
+     "CONTEXTO DISPONIBLE:\n\n"
+     "Historial de conversación relevante:\n{history}\n\n"
+     "Documentos oficiales del HUSJ sobre telemedicina:\n{context}\n\n"
+     "Analiza cuidadosamente este contexto antes de formular tu respuesta. "
+     "Asegúrate de que toda la información proporcionada esté respaldada por los documentos recuperados."),
 
     ("human",
-     "El usuario te acaba de hacer la siguiente pregunta: {input}")
+     "Pregunta del usuario sobre telemedicina en el Hospital Universitario San José: {input}")
 ])
 
 rag_chain = (
+    RPrint() |
     {
-        'input': (lambda x: x),
-        'context': retriever | long_reorder | docs2str,
-        'history': (lambda x: chat_history),
+        'input': (lambda x: x if isinstance(x, str) else x.get('input', '')),
+        'context': (lambda x: x if isinstance(x, str) else x.get('input', '')) | retriever | long_reorder | docs2str,
+        'history': (lambda x: "\n".join(chat_history)),
     }
     | chat_prompt
     | RPrint()
@@ -42,24 +61,4 @@ rag_chain = (
     | StrOutputParser()
 )
 
-### CHAT_HISTORY MANAGEMENT
 
-resume_chat_prompt = ChatPromptTemplate.from_template(
-    "A continuación tienes una interacción previa en el formato:\n"
-    "{input}\n\n"
-    "Resume la conversación de forma muy breve, clara y directa, "
-    "dejando solo lo esencial. Reformula la pregunta del usuario en una sola frase corta si es posible. "
-    "Evita detalles irrelevantes y texto innecesario."
-)
-
-resume_chain = (
-    resume_chat_prompt
-    | llm.llama_instruct
-    | StrOutputParser()
-)
-
-def update_chat_history(data):
-    h = parse_to_history(data)
-    response = resume_chain.invoke({'input': h})
-    print(response)
-    chat_history.append(h)

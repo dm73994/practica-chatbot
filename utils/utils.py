@@ -8,6 +8,7 @@ from rich.style import Style
 from pathlib import Path
 import os
 
+from pipelines.chat_history import update_chat_history
 
 console = Console()
 base_style =Style(color="#76B900", bold=True)
@@ -23,9 +24,6 @@ def RPrint(preface=""):
         return x
     return RunnableLambda(partial(print_and_return, preface=preface))
 
-def parse_to_history(data):
-    """Accepts 'input'/'output' dictionary and return format string"""
-    return f"User previously said: {data.get('input')}\nSystem previously responded: {data.get('output')}"
 
 def docs2str(docs, title="Tile"):
     """Useful utility for making chunks into context string. Optional but useful"""
@@ -126,3 +124,24 @@ def load_docs():
         except Exception as e:
             print(f"Error general: {str(e)}")
             return []
+
+
+def stream_chain(chain, input_data, return_buffer=True):
+    """Stream chain que maneja tokens incrementales"""
+    buffer = ""
+    try:
+        for token in chain.stream({'input': input_data}):
+            if token and isinstance(token, str):
+                if return_buffer:
+                    buffer += token  # Solo agregar el nuevo token
+                    yield buffer  # Yield el buffer completo
+                else:
+                    yield token  # Yield token individual
+
+        # Actualizar historial al final
+        if buffer.strip():
+            update_chat_history({'input': input_data, 'output': buffer})
+
+    except Exception as e:
+        print(f"Error en stream_chain: {e}")
+        yield f"Error procesando la solicitud: {str(e)}"
